@@ -1,7 +1,8 @@
+// pages/api/socket.js
 import { Server } from 'socket.io';
 
 let io;
-// petite mémoire en RAM pour les rooms (OK pour un proto)
+// État en RAM (OK pour proto, pas fiable en prod serverless)
 const rooms = global._ptt_rooms || (global._ptt_rooms = new Map());
 function getRoom(id) {
   if (!rooms.has(id)) rooms.set(id, { id, players: [], status: 'waiting', started: false });
@@ -10,10 +11,15 @@ function getRoom(id) {
 
 export default function handler(req, res) {
   if (!res.socket.server.io) {
-    io = new Server(res.socket.server, { path: '/api/socket', addTrailingSlash: false });
+    io = new Server(res.socket.server, {
+      path: '/api/socket',
+      addTrailingSlash: false
+    });
     res.socket.server.io = io;
 
     io.on('connection', (socket) => {
+      console.log('[io] connection', socket.id);
+
       socket.on('room:join', ({ room, nick }) => {
         socket.join(room);
         socket.data.room = room;
@@ -22,30 +28,45 @@ export default function handler(req, res) {
         if (!r.players.find(p => p.id === socket.id)) {
           r.players.push({ id: socket.id, nick: socket.data.nick, ready: false });
         }
+        console.log('[io] join', room, 'players=', r.players.length);
         io.to(room).emit('room:state', { players: r.players, status: r.status });
       });
 
       socket.on('player:ready', () => {
-        const room = socket.data.room; const r = getRoom(room);
-        const p = r.players.find(p => p.id === socket.id); if (p) p.ready = true;
+        const room = socket.data.room;
+        const r = getRoom(room);
+        const p = r.players.find(p => p.id === socket.id);
+        if (p) p.ready = true;
         io.to(room).emit('room:state', { players: r.players, status: r.status });
 
-        if (r.players.filter(p => p.ready).length >= 2 && !r.started) {
-          r.started = true; r.status = 'countdown';
+        // ⚠️ Pour test : on démarre dès 1 joueur prêt.
+        // Remets ">= 2" quand vous êtes 2 en vrai.
+        if (r.players.filter(p => p.ready).length >= 1 && !r.started) {
+          r.started = true;
+          r.status = 'countdown';
           let n = 3;
+          console.log('[io] countdown start', room);
           const t = setInterval(() => {
             io.to(room).emit('game:countdown', n);
-            if (n <= 1) { clearInterval(t); r.status = 'started'; io.to(room).emit('game:start'); }
+            if (n <= 1) {
+              clearInterval(t);
+              r.status = 'started';
+              console.log('[io] game start', room);
+              io.to(room).emit('game:start');
+            }
             n--;
           }, 900);
         }
       });
 
       socket.on('player:lose', ({ reason }) => {
-        const room = socket.data.room; const r = getRoom(room);
+        const room = socket.data.room;
+        const r = getRoom(room);
         if (r.started) {
-          r.started = false; r.status = 'ended';
+          r.started = false;
+          r.status = 'ended';
           const loser = r.players.find(p => p.id === socket.id);
+          console.log('[io] game end', room, 'loser=', loser?.nick);
           io.to(room).emit('game:end', { loser: loser?.nick || 'Un joueur', reason: reason || 'Détection' });
           r.players.forEach(p => (p.ready = false));
         }
@@ -56,6 +77,7 @@ export default function handler(req, res) {
         if (!room) return;
         const r = getRoom(room);
         r.players = r.players.filter(p => p.id !== socket.id);
+        console.log('[io] disconnect', room, 'players=', r.players.length);
         io.to(room).emit('room:state', { players: r.players, status: r.status });
       });
     });
