@@ -1,3 +1,4 @@
+// pages/duel/[id].js
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import io from 'socket.io-client';
@@ -17,11 +18,13 @@ export default function DuelRoom() {
 
   const [nick, setNick] = useState('');
   const [players, setPlayers] = useState([]);
-  const [status, setStatus] = useState('En attente…');
+  const [status, setStatus] = useState('Connexion…');
+  const [readyCount, setReadyCount] = useState(0);
   const [count, setCount] = useState(0);
   const [started, setStarted] = useState(false);
   const [loser, setLoser] = useState(null);
   const [elapsed, setElapsed] = useState(0);
+  const [connected, setConnected] = useState(false);
 
   const startRef = useRef(0);
   const rafRef = useRef(0);
@@ -29,7 +32,6 @@ export default function DuelRoom() {
 
   useEffect(() => {
     if (!r.isReady || !id) return;
-
     const n = localStorage.getItem('ptt:nick') || `Joueur-${Math.floor(Math.random() * 1000)}`;
     setNick(n);
 
@@ -37,15 +39,19 @@ export default function DuelRoom() {
       socket = io({
         path: '/api/socket',
         addTrailingSlash: false,
-        transports: ['websocket', 'polling'],
+        transports: ['websocket', 'polling'], // fallback si WS pas sticky
       });
+      socket.on('connect', () => setConnected(true));
+      socket.on('disconnect', () => setConnected(false));
       socket.on('connect_error', (err) => console.warn('[socket] connect_error', err?.message));
+      socket.on('error', (err) => console.warn('[socket] error', err?.message));
     }
 
     socket.emit('room:join', { room: id, nick: n });
     socket.on('room:state', (s) => {
-      setPlayers(s.players);
+      setPlayers(s.players || []);
       setStatus(s.status || 'waiting');
+      setReadyCount(s.readyCount ?? 0);
     });
     socket.on('game:countdown', (n) => setCount(n));
     socket.on('game:start', () => {
@@ -78,7 +84,6 @@ export default function DuelRoom() {
     };
     rafRef.current = requestAnimationFrame(tick);
   }
-
   function stopClock() {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
   }
@@ -130,12 +135,14 @@ export default function DuelRoom() {
   return (
     <div style={{ fontFamily: 'system-ui', padding: 24 }}>
       <h1>Room {id}</h1>
-      <p>
-        Ton pseudo : <strong>{nick}</strong>
-      </p>
+      <p>Ton pseudo : <strong>{nick}</strong></p>
 
-      <div style={{ border: '1px solid #ddd', borderRadius: 12, padding: 12, maxWidth: 520 }}>
-        <h3>Joueurs ({players.length})</h3>
+      <div style={{ border: '1px solid #ddd', borderRadius: 12, padding: 12, maxWidth: 560 }}>
+        <p style={{ color: connected ? '#0a0' : '#a00' }}>
+          État connexion socket : <strong>{connected ? 'connecté' : 'déconnecté'}</strong>
+        </p>
+
+        <h3>Joueurs ({players.length}) — prêts: {readyCount}</h3>
         <ul>{players.map((p) => <li key={p.id}>{p.nick} {p.ready ? '✅' : '⏳'}</li>)}</ul>
 
         {!started && !loser && (
@@ -144,8 +151,8 @@ export default function DuelRoom() {
               Je suis prêt
             </button>
             {count > 0 && <h2>Départ dans… {count}</h2>}
-            <p style={{ color: '#666' }}>
-              Le départ se lance quand <strong>2 joueurs</strong> sont prêts.
+            <p style={{ color: '#666', fontSize: 12 }}>
+              Mode test : le départ se lance dès <strong>1 prêt</strong> pour valider le flux.
             </p>
           </>
         )}
@@ -155,9 +162,7 @@ export default function DuelRoom() {
         {loser && <p>Sanction IRL : le perdant paye l’addition 💸</p>}
       </div>
 
-      <p style={{ marginTop: 12 }}>
-        <a href="/">← Accueil</a>
-      </p>
+      <p style={{ marginTop: 12 }}><a href="/">← Accueil</a></p>
     </div>
   );
 }
