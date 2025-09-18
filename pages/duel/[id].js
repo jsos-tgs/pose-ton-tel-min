@@ -1,17 +1,16 @@
-// pages/duel/[id].js
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import io from 'socket.io-client';
 
 let socket;
-function fmt(ms){ const t=Math.floor(ms),m=Math.floor(t/60000),s=Math.floor((t%60000)/1000),ms3=String(t%1000).padStart(3,'0'); return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${ms3}`; }
+const fmt = (ms)=>{ const t=Math.floor(ms),m=Math.floor(t/60000),s=Math.floor((t%60000)/1000),ms3=String(t%1000).padStart(3,'0'); return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${ms3}`; };
 
 export default function DuelRoom(){
   const r = useRouter();
   const { id } = r.query;
   const [nick, setNick] = useState('');
   const [players, setPlayers] = useState([]);
-  const [status, setStatus] = useState('connexion…');
+  const [status, setStatus] = useState('En attente…');
   const [count, setCount] = useState(0);
   const [started, setStarted] = useState(false);
   const [loser, setLoser] = useState(null);
@@ -25,13 +24,8 @@ export default function DuelRoom(){
     setNick(n);
 
     if (!socket) {
-      socket = io({
-        path: '/api/socket',
-        addTrailingSlash: false,
-        transports: ['websocket','polling']
-      });
+      socket = io({ path: '/api/socket', addTrailingSlash: false, transports: ['websocket','polling'] });
       socket.on('connect_error', (err)=> console.warn('[socket] connect_error', err?.message));
-      socket.on('error', (err)=> console.warn('[socket] error', err?.message));
     }
 
     socket.emit('room:join', { room: id, nick: n });
@@ -67,3 +61,30 @@ export default function DuelRoom(){
     detachRef.current = ()=>{ handlers.forEach(([t,fn])=>removeEventListener(t,fn,opts)); document.removeEventListener('visibilitychange', onVis, true); removeEventListener('blur', onBlur, true); };
   }
   function detachGuard(){ detachRef.current && detachRef.current(); }
+
+  return (
+    <div style={{fontFamily:'system-ui', padding:24}}>
+      <h1>Room {id}</h1>
+      <p>Ton pseudo : <strong>{nick}</strong></p>
+
+      <div style={{border:'1px solid #ddd', borderRadius:12, padding:12, maxWidth:520}}>
+        <h3>Joueurs ({players.length})</h3>
+        <ul>{players.map(p => <li key={p.id}>{p.nick} {p.ready ? '✅' : '⏳'}</li>)}</ul>
+
+        {!started && !loser && (
+          <>
+            <button onClick={ready} style={{padding:'10px 14px', fontWeight:700}}>Je suis prêt</button>
+            {count>0 && <h2>Départ dans… {count}</h2>}
+            <p style={{color:'#666'}}>Le départ se lance quand <strong>2 joueurs</strong> sont prêts.</p>
+          </>
+        )}
+
+        {started && !loser && <h2 style={{marginTop:8}}>{fmt(elapsed)}</h2>}
+        {loser && <h2>{loser} a perdu 😅</h2>}
+        {loser && <p>Sanction IRL : le perdant paye l’addition 💸</p>}
+      </div>
+
+      <p style={{marginTop:12}}><a href="/">← Accueil</a></p>
+    </div>
+  );
+}
